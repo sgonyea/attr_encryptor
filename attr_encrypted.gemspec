@@ -1,15 +1,11 @@
 # -*- encoding: utf-8 -*-
-
-lib = File.expand_path('../lib/', __FILE__)
-$:.unshift lib unless $:.include?(lib)
-
-require 'attr_encrypted/version'
-require 'date'
+$:.push File.expand_path("../lib", __FILE__)
+require "attr_encrypted/version"
 
 Gem::Specification.new do |s|
-  s.name    = 'attr_encrypted'
-  s.version = AttrEncrypted::Version.string
-  s.date    = Date.today
+  s.name        = 'attr_encrypted'
+  s.version     = AttrEncrypted::VERSION
+  s.platform    = Gem::Platform::RUBY
 
   s.summary     = 'Encrypt and decrypt attributes'
   s.description = 'Generates attr_accessors that encrypt and decrypt attributes transparently'
@@ -18,17 +14,20 @@ Gem::Specification.new do |s|
   s.email    = 'shuber@huberry.com'
   s.homepage = 'http://github.com/shuber/attr_encrypted'
 
-  s.has_rdoc = false
-  s.rdoc_options = ['--line-numbers', '--inline-source', '--main', 'README.rdoc']
+  s.has_rdoc = true
 
-  s.require_paths = ['lib']
+  s.add_dependency 'encryptor', '~>1.1.1'
+  s.add_dependency 'yard',      '~>0.6'
 
-  s.files      = Dir['{bin,lib}/**/*'] + %w(MIT-LICENSE Rakefile README.rdoc)
-  s.test_files = Dir['test/**/*']
+  s.add_development_dependency 'activerecord', '~>2.3'
+  s.add_development_dependency 'datamapper'
+  s.add_development_dependency 'mocha'
+  s.add_development_dependency 'sequel'
 
-  s.add_dependency('encryptor', ['>= 1.1.1'])
-  s.add_development_dependency('activerecord', ['>= 2.0.0'])
-  s.add_development_dependency('datamapper')
-  s.add_development_dependency('mocha')
-  s.add_development_dependency('sequel')
+  s.add_development_dependency 'rspec', '~>2.4'
+
+  s.files         = `git ls-files`.split("\n")
+  s.test_files    = `git ls-files -- {test,spec,features}/*`.split("\n")
+  s.executables   = `git ls-files -- bin/*`.split("\n").map{ |f| File.basename(f) }
+  s.require_paths = ["lib"]
 end

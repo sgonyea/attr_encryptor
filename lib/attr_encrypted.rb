@@ -1,8 +1,27 @@
 require 'encryptor'
+require 'attr_encrypted/adapters/active_record' if defined?(ActiveRecord::Base)
+require 'attr_encrypted/adapters/data_mapper'   if defined?(DataMapper)
+require 'attr_encrypted/adapters/sequel'        if defined?(Sequel)
+require 'attr_encrypted/version'
+require 'ostruct'
 
 # Adds attr_accessors that encrypt and decrypt an object's attributes
 module AttrEncrypted
-  autoload :Version, 'attr_encrypted/version'
+  def default_options
+    {
+      :prefix           => 'encrypted_',
+      :suffix           => '',
+      :if               => proc { true  },
+      :unless           => proc { false },
+      :encode?          => false,
+      :encoding         => 'm',
+      :marshal?         => false,
+      :marshal          => :marshal_handler.to_proc,
+      :cryptor          => :crypto_handler.to_proc,
+      :decryptor        => :decryptor.to_proc,
+      :encryptor        => :encryptor.to_proc
+    }
+  end
 
   def self.extended(base) # :nodoc:
     base.class_eval do
@@ -13,63 +32,7 @@ module AttrEncrypted
   end
 
   # Generates attr_accessors that encrypt and decrypt attributes transparently
-  #
-  # Options (any other options you specify are passed to the encryptor's encrypt and decrypt methods)
-  #
-  #   :attribute        => The name of the referenced encrypted attribute. For example
-  #                        <tt>attr_accessor :email, :attribute => :ee</tt> would generate an
-  #                        attribute named 'ee' to store the encrypted email. This is useful when defining
-  #                        one attribute to encrypt at a time or when the :prefix and :suffix options
-  #                        aren't enough. Defaults to nil.
-  #
-  #   :prefix           => A prefix used to generate the name of the referenced encrypted attributes.
-  #                        For example <tt>attr_accessor :email, :password, :prefix => 'crypted_'</tt> would
-  #                        generate attributes named 'crypted_email' and 'crypted_password' to store the
-  #                        encrypted email and password. Defaults to 'encrypted_'.
-  #
-  #   :suffix           => A suffix used to generate the name of the referenced encrypted attributes.
-  #                        For example <tt>attr_accessor :email, :password, :prefix => '', :suffix => '_encrypted'</tt>
-  #                        would generate attributes named 'email_encrypted' and 'password_encrypted' to store the
-  #                        encrypted email. Defaults to ''.
-  #
-  #   :key              => The encryption key. This option may not be required if you're using a custom encryptor. If you pass
-  #                        a symbol representing an instance method then the :key option will be replaced with the result of the
-  #                        method before being passed to the encryptor. Objects that respond to :call are evaluated as well (including procs).
-  #                        Any other key types will be passed directly to the encryptor.
-  #
-  #   :encode           => If set to true, attributes will be encoded as well as encrypted. This is useful if you're
-  #                        planning on storing the encrypted attributes in a database. The default encoding is 'm' (base64),
-  #                        however this can be overwritten by setting the :encode option to some other encoding string instead of
-  #                        just 'true'. See http://www.ruby-doc.org/core/classes/Array.html#M002245 for more encoding directives.
-  #                        Defaults to false unless you're using it with ActiveRecord, DataMapper, or Sequel.
-  #
-  #   :default_encoding => Defaults to 'm' (base64).
-  #
-  #   :marshal          => If set to true, attributes will be marshaled as well as encrypted. This is useful if you're planning
-  #                        on encrypting something other than a string. Defaults to false unless you're using it with ActiveRecord
-  #                        or DataMapper.
-  #
-  #   :marshaler        => The object to use for marshaling. Defaults to Marshal.
-  #
-  #   :dump_method      => The dump method name to call on the <tt>:marshaler</tt> object to. Defaults to 'dump'.
-  #
-  #   :load_method      => The load method name to call on the <tt>:marshaler</tt> object. Defaults to 'load'.
-  #
-  #   :encryptor        => The object to use for encrypting. Defaults to Encryptor.
-  #
-  #   :encrypt_method   => The encrypt method name to call on the <tt>:encryptor</tt> object. Defaults to 'encrypt'.
-  #
-  #   :decrypt_method   => The decrypt method name to call on the <tt>:encryptor</tt> object. Defaults to 'decrypt'.
-  #
-  #   :if               => Attributes are only encrypted if this option evaluates to true. If you pass a symbol representing an instance
-  #                        method then the result of the method will be evaluated. Any objects that respond to <tt>:call</tt> are evaluated as well.
-  #                        Defaults to true.
-  #
-  #   :unless           => Attributes are only encrypted if this option evaluates to false. If you pass a symbol representing an instance
-  #                        method then the result of the method will be evaluated. Any objects that respond to <tt>:call</tt> are evaluated as well.
-  #                        Defaults to false.
-  #
-  # You can specify your own default options
+  # @example You can pass your own options, overriding the defaults
   #
   #   class User
   #     # now all attributes will be encoded and marshaled by default
@@ -77,69 +40,110 @@ module AttrEncrypted
   #     attr_encrypted :configuration, :key => 'my secret key'
   #   end
   #
-  #
-  # Example
-  #
+  # @example Usage from within a class
   #   class User
   #     attr_encrypted :email, :credit_card, :key => 'some secret key'
   #     attr_encrypted :configuration, :key => 'some other secret key', :marshal => true
   #   end
-  #
   #   @user = User.new
-  #   @user.encrypted_email # nil
-  #   @user.email? # false
+  #
+  # @example Instance methods
+  #   @user.encrypted_email #=> nil
+  #   @user.email?          #=> false
   #   @user.email = 'test@example.com'
-  #   @user.email? # true
-  #   @user.encrypted_email # returns the encrypted version of 'test@example.com'
+  #   @user.email?          #=> true
+  #   @user.encrypted_email #=> returns the encrypted version of 'test@example.com'
   #
-  #   @user.configuration = { :time_zone => 'UTC' }
-  #   @user.encrypted_configuration # returns the encrypted version of configuration
-  #
-  #   See README for more examples
+  # @overload attr_encrypted(attributes)
+  #   @param [Array<Symbol>] attributes A list of attributes that should be encrypted
+  # @overload attr_encrypted(attributes, opts)
+  #   @param [Array<Symbol>] attributes A list of attributes that should be encrypted
+  #   @param [Hash] opts Overrides to the default options, for the encryption of the given attributes
+  #   @see #handle_options!
   def attr_encrypted(*attributes)
-    options = {
-      :prefix           => 'encrypted_',
-      :suffix           => '',
-      :if               => true,
-      :unless           => false,
-      :encode           => false,
-      :default_encoding => 'm',
-      :marshal          => false,
-      :marshaler        => Marshal,
-      :dump_method      => 'dump',
-      :load_method      => 'load',
-      :encryptor        => Encryptor,
-      :encrypt_method   => 'encrypt',
-      :decrypt_method   => 'decrypt'
-    }.merge!(attr_encrypted_options).merge!(attributes.last.is_a?(Hash) ? attributes.pop : {})
+    options = handle_options!(attributes)
 
-    options[:encode] = options[:default_encoding] if options[:encode] == true
+    attributes.each do |attr|
+      attribute = options.attribute ||= "#{options.prefix}#{attr}#{options.suffix}"
 
-    attributes.each do |attribute|
-      encrypted_attribute_name = (options[:attribute] ? options[:attribute] : [options[:prefix], attribute, options[:suffix]].join).to_sym
+      unless respond_to? attribute
+        class_eval <<-RB
+          def #{attribute}
+            decrypt @#{attribute}
+          end
 
-      instance_methods_as_symbols = instance_methods.collect { |method| method.to_sym }
-      attr_reader encrypted_attribute_name unless instance_methods_as_symbols.include?(encrypted_attribute_name)
-      attr_writer encrypted_attribute_name unless instance_methods_as_symbols.include?(:"#{encrypted_attribute_name}=")
-
-      define_method(attribute) do
-        instance_variable_get("@#{attribute}") || instance_variable_set("@#{attribute}", decrypt(attribute, send(encrypted_attribute_name)))
+          def #{attribute}?
+            attr = self.#{attribute}
+            if attr.respond_to?(:empty)
+              !attr.empty?
+            else
+              !!attr
+            end
+          end
+        RB
       end
 
-      define_method("#{attribute}=") do |value|
-        send("#{encrypted_attribute_name}=", encrypt(attribute, value))
-        instance_variable_set("@#{attribute}", value)
+      unless respond_to? "#{attribute}="
+        class_eval <<-RB
+          def #{attribute}=(val)
+            @#{attribute}= encrypt(val)
+          end
+        RB
       end
-
-      define_method("#{attribute}?") do
-        value = send(attribute)
-        value.respond_to?(:empty?) ? !value.empty? : !!value
-      end
-
-      encrypted_attributes[attribute.to_sym] = options.merge(:attribute => encrypted_attribute_name)
     end
+
+    encrypted_attributes[attr] = options.marshal_dump
   end
   alias_method :attr_encryptor, :attr_encrypted
+
+  # @param [Array<..., Hash>] attributes The attributes, as passed into the attr_encrypted entry method. Destructive.
+  #   @option opts [String] :attribute        The name of the referenced encrypted attribute. This is useful when defining one attribute to encrypt at a time or when the :prefix and :suffix options aren't enough.
+  #   @option opts [String] :prefix           The attributes prefix, as stored internally.
+  #   @option opts [String] :suffix           The attributes suffix, as stored internally.
+  #   @option opts [boolean, #call] :if       Encryption will happen if this returns true
+  #   @option opts [boolean, #call] :unless   Encryption will happen unless this returns true
+  #   @option opts [String] :encoding         How to encode the data, if desired.
+  #   @option opts [boolean] :marshal?        Whether or not to marshal the data, before passing to the encode method encryption
+  #   @option opts [boolean] :encode?         Whether or not to encode the data, before passing to the encryption method encryption
+  #   @option opts [#call]   :dump_method     If the default Marshal#dump is not desirable, pass in a Proc (or something that responds to #call)
+  #   @option opts [#call]   :load_method     If the default Marshal#load is not desirable, pass in a Proc (or something that responds to #call)
+  #   @option opts [#call]   :encrypt_method  If the default encryption is not desirable, pass in a Proc (or something that responds to #call)
+  #   @option opts [#call]   :decrypt_method  If the default decryption is not desirable, pass in a Proc (or something that responds to #call)
+  #   @option opts [String, Symbol] :key
+  # @return [OpenStruct] Merged options, handles all deprecations
+  def handle_options!(attributes)
+    options = default_options
+    options.merge!(attr_encrypted_options)
+
+    if attributes.last.is_a?(Hash)
+      options.merge!(attributes.pop)
+
+      unless options[:unless].respond_to?(:call)
+        options[:unless] = proc { options[:unless] }
+      end
+
+      unless options[:if].respond_to?(:call)
+        options[:if] = proc { options[:if] }
+      end
+
+      if options.has_key?(:encode)
+        options[:encode?] = options.delete :encode
+      end
+
+      if options.has_key?(:marshal) and not options[:marshal].is_a?(Proc)
+        options[:marshal?]  = options.delete :marshal
+        options[:marshal]   = DEFAULT_OPTIONS[:marshal]
+        STDERR.puts "DEPRECATED: Please specify :marshal?, instead of :marshal"
+      end
+
+      if options.has_key?(:encryptor)
+        options[:cryptor] = options.delete :encryptor
+        STDERR.puts "DEPRECATED: Please specify :cryptor, instead of :encryptor"
+      end
+    end
+
+    OpenStruct.new options
+  end
 
   # Default options to use with calls to <tt>attr_encrypted</tt>
   #
@@ -172,11 +176,13 @@ module AttrEncrypted
   #   end
   #
   #   email = User.decrypt(:email, 'SOME_ENCRYPTED_EMAIL_STRING')
-  def decrypt(attribute, encrypted_value, options = {})
-    options = encrypted_attributes[attribute.to_sym].merge(options)
-    if options[:if] && !options[:unless] && !encrypted_value.nil? && !(encrypted_value.is_a?(String) && encrypted_value.empty?)
-      encrypted_value = encrypted_value.unpack(options[:encode]).first if options[:encode]
-      value = options[:encryptor].send(options[:decrypt_method], options.merge!(:value => encrypted_value))
+
+  def decrypt(attribute, encrypted_value)
+    options = encrypted_attributes[attribute]
+
+    if should_encrypt?(value, options)
+      encrypted = encrypted_value.unpack(options.encoding).first if options.encode?
+      value = options[:encryptor].send(options[:decrypt_method], options.merge!(:value => encrypted))
       value = options[:marshaler].send(options[:load_method], value) if options[:marshal]
       value
     else
@@ -193,13 +199,33 @@ module AttrEncrypted
   #   end
   #
   #   encrypted_email = User.encrypt(:email, 'test@example.com')
-  def encrypt(attribute, value, options = {})
-    options = encrypted_attributes[attribute.to_sym].merge(options)
-    if options[:if] && !options[:unless] && !value.nil? && !(value.is_a?(String) && value.empty?)
-      value = options[:marshal] ? options[:marshaler].send(options[:dump_method], value) : value.to_s
-      encrypted_value = options[:encryptor].send(options[:encrypt_method], options.merge!(:value => value))
-      encrypted_value = [encrypted_value].pack(options[:encode]) if options[:encode]
-      encrypted_value
+  def encrypt(attribute, value)
+    options = encrypted_attributes[attribute]
+
+    if should_encrypt?(value, options)
+      marshalled  = options[:marshal].call(value) if options[:marshal?] ? options[:marshaler].send(options[:dump_method], value) : value.to_s
+      encrypted   = options[:encryptor].send(options[:encrypt_method], options.merge!(:value => value))
+      encrypted   = encode(encrypted, options)
+      encrypted
+    else
+      value
+    end
+  end
+
+  def should_encrypt?(value, options)
+    return false if     value.nil?
+    return false unless value.is_a?(String) and not value.empty?
+    return false if     options.unless.call(value, options)
+    return false unless options.if.call(value, options)
+
+
+    return true
+  end
+  alias :should_decrypt? :should_encrypt?
+
+  def encode(value, options)
+    if options[:encode]
+      [value].pack(options[:default_encode])
     else
       value
     end
@@ -299,5 +325,3 @@ module AttrEncrypted
 end
 
 Object.extend AttrEncrypted
-
-Dir[File.join(File.dirname(__FILE__), 'attr_encrypted', 'adapters', '*.rb')].each { |adapter| require adapter }

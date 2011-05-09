@@ -1,2 +1,9 @@
 .DS_Store
-pkg
+.idea
+pkg/*
+*.gem
+.bundle
+*.rbc
+*.tmproj
+Gemfile.lock
+
